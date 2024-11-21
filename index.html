@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speech To Text To Speech</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #ffffff;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+        }
+
+        #videoContainer {
+            width: 100vw;
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            overflow: hidden;
+            z-index: -1; /* Pastikan video ada di latar belakang */
+        }
+
+        #video-idle, #video-talking {
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* Agar video memenuhi layar */
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+
+
+        #statusMessage {
+            text-align: center;
+            margin: 20px 0;
+            font-weight: bold;
+            color: #3498db;
+            font-size: 1.1em;
+        }
+
+        #recordButton {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background-color: #3498db;
+            border: none;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            z-index: 10;
+        }
+
+        #recordButton:hover {
+            background-color: #2980b9;
+            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        #recordButton:active {
+            transform: scale(0.95);
+        }
+
+        #recordButton.recording {
+            background-color: #e74c3c;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7);
+            }
+            70% {
+                transform: scale(1.05);
+                box-shadow: 0 0 0 10px rgba(231, 76, 60, 0);
+            }
+            100% {
+                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(231, 76, 60, 0);
+            }
+        }
+
+        #audioResponse {
+            width: 100%;
+            max-width: 400px;
+            margin-top: 20px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1></h1>
+    <div id="statusMessage"></div>
+    
+    <div id="videoContainer">
+        <video id="video-idle" autoplay muted loop playsinline>
+            <source src="video/video_idle.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+        <video id="video-talking" autoplay muted loop playsinline style="display: none;">
+            <source src="video/video_talking.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+
+    <audio id="audioResponse" style="display: none;"></audio>
+
+    <button id="recordButton">Rekam</button>
+
+    <script>
+        const recordButton = document.getElementById('recordButton');
+        const statusMessage = document.getElementById('statusMessage');
+        const audioResponse = document.getElementById('audioResponse');
+        const videoIdle = document.getElementById('video-idle');
+        const videoTalking = document.getElementById('video-talking');
+
+        let recognition;
+        let isRecording = false;
+
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = false;
+            recognition.lang = 'id-ID';
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+
+            recognition.onstart = () => {
+                isRecording = true;
+                statusMessage.textContent = 'Mendengarkan...';
+                recordButton.classList.add('recording');
+                // Tetap gunakan video_idle saat mendengarkan
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                console.log('Transcribed text:', transcript);
+                processWithGemini(transcript);
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                statusMessage.textContent = `Error: ${event.error}`;
+                resetUI();
+            };
+
+            recognition.onend = () => {
+                isRecording = false;
+                resetUI();
+            };
+        } else {
+            statusMessage.textContent = 'Browser Anda tidak mendukung pengenalan suara.';
+            recordButton.disabled = true;
+        }
+
+        recordButton.onclick = () => {
+            if (!isRecording) {
+                recognition.start();
+            } else {
+                recognition.stop();
+            }
+        };
+
+        async function processWithGemini(text) {
+            statusMessage.textContent = 'Klaris berpikir';
+            try {
+                const response = await fetch('/process-speech', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ text })
+                });
+                
+                const data = await response.json();
+                if (data.text && data.audioUrl) {
+                    audioResponse.src = data.audioUrl;
+                    statusMessage.textContent ;
+                    startTalkingVideo(); // Video berubah ke talking saat audio dimulai
+                    await audioResponse.play();
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                statusMessage.textContent = 'Terjadi kesalahan.';
+            } finally {
+                // Tetapkan kembali ke video_idle setelah audio selesai
+                audioResponse.addEventListener('ended', () => {
+                    startIdleVideo();
+                    statusMessage.textContent ;
+                });
+            }
+        }
+
+        function startTalkingVideo() {
+            videoIdle.style.display = 'none';
+            videoTalking.style.display = 'block';
+            videoTalking.play().catch(console.error);
+        }
+
+        function startIdleVideo() {
+            videoTalking.style.display = 'none';
+            videoIdle.style.display = 'block';
+            videoIdle.play().catch(console.error);
+        }
+
+        function resetUI() {
+            recordButton.classList.remove('recording');
+            if (!isRecording) {
+                statusMessage.textContent = '';
+                startIdleVideo(); // Pastikan kembali ke video_idle di akhir sesi
+            }
+        }
+
+        audioResponse.addEventListener('ended', () => {
+            startIdleVideo();
+            statusMessage.textContent = '';
+        });
+
+        // Ensure videos are loaded and handle errors
+        videoIdle.addEventListener('loadeddata', () => {
+            console.log('Idle video loaded');
+            startIdleVideo();
+        });
+
+        videoTalking.addEventListener('loadeddata', () => {
+            console.log('Talking video loaded');
+        });
+
+        // Handle video errors
+        videoIdle.addEventListener('error', (e) => {
+            console.error('Error loading idle video:', e);
+        });
+
+        videoTalking.addEventListener('error', (e) => {
+            console.error('Error loading talking video:', e);
+        });
+
+        // Initialize with idle video
+        startIdleVideo();
+    </script>
+</body>
+</html>
